@@ -1,0 +1,2 @@
+kill -9 `ps | grep SimpleHTTPServer | awk '{print $1}'` &>/dev/null
+python -m SimpleHTTPServer 80 &

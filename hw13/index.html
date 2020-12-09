@@ -1,0 +1,1638 @@
+<script src=lib13.js></script>
+<script src=matrix.js></script>
+
+<body bgcolor=black text=white link=white alink=white vlink=white>
+<center>
+<canvas id='canvas1' width=600 height=600></canvas>
+
+
+<!! ----------------------------- SLIDERS ----------------------------->
+
+ROTATE VIEW <input type=range min=1 max=100 value=50 class=slider id=sceneRotateSlider>
+
+<p>
+
+SCALE Y <input type=range min=1 max=100 value=50 class=slider id=yScaleSlider>
+
+<!! ------------------------------------------------------------------->
+
+
+</center>
+
+</body>
+
+
+<!!-------- VERTEX SHADER -------->
+
+<script id='my_vertex_shader' type='x-shader/x-vertex'>
+   attribute vec3 aPos, aNor;
+   attribute vec2 aUV;
+   uniform   mat4 uMatrix, uIMatrix, uCamera;
+   varying   vec3 vPos, vNor, vAPos, vANor;
+   varying   vec2 vUV;
+
+   // TO ANIMATE EACH VERTEX, TRANSFORM BY UNIFORM VARIABLE uMatrix.
+
+   void main() {
+      vec4 pos = uMatrix * vec4(aPos, 1.);
+      vec4 nor = vec4(aNor, 0.) * uIMatrix;
+      vPos = pos.xyz;
+      vNor = nor.xyz;
+      vAPos = aPos;
+      vANor = aNor;
+      vUV   = aUV;
+      gl_Position = (uCamera * pos) * vec4(1.,1.,0.1,1.);
+   }
+</script>
+
+
+<!!-------- FRAGMENT SHADER -------->
+
+<script id='my_fragment_shader' type='x-shader/x-fragment'>
+
+ const int nl = 2;
+
+ uniform float uTime;
+
+ uniform vec3 uLDir[nl];
+ uniform vec3 uLCol[nl];
+
+ uniform mat4 uPhong[2];
+
+ uniform sampler2D uSampler; // INDEX OF THE TEXTURE TO BE SAMPLED
+ uniform float uTexture;     // ARE WE RENDERING TEXTURE FOR THIS OBJECT?
+
+ varying vec3 vPos, vNor, vAPos, vANor;
+ varying vec2 vUV;
+
+ void main() {
+
+    // NORMALIZE SURFACE NORMAL VECTOR
+
+    vec3 N = normalize(vNor);
+
+    // HERE IS WHERE WE COULD DO BUMP MAPPING
+/*
+    vec4 bumpTexture = texture2D(uBumpSampler, vUV);
+    N = normalize(N + (bumpTexture.rgb - vec3(.5)));
+*/
+
+    // DO PHONG SHADING
+
+    vec3 ambient = uPhong[0][0].xyz;
+    vec3 diffuse = uPhong[0][1].xyz;
+    vec3 specular = uPhong[0][2].xyz;
+    float p = uPhong[0][2].w;
+
+    // HERE IS WHERE WE COULD USE TEXTURE TO VARY SHININESS
+/*
+    vec4 shininessTexture = texture2D(uShininessSampler, vUV);
+    p = mix(p, p * shininessTexture.r, uShininessTexture);
+*/
+
+    vec3 color = ambient;
+    for (int i = 0 ; i < nl ; i++) {
+       color += diffuse * uLCol[i] * max(0., dot(N, uLDir[i]));
+       vec3 R = 2. * N * dot(N, uLDir[i]) - uLDir[i];
+       color += specular * uLCol[i] * pow(max(0., dot(N, R)), p);
+    }
+
+    // ADD PROCEDURAL TEXTURE: A CHECKERBOARD PATTERN
+
+    //color *= .5 + .5 * sin(30. * vUV.x) * sin(30. * vUV.y);
+
+    vec4 texture = texture2D(uSampler, vUV);
+    color *= mix(vec3(1.), texture.rgb, texture.a * uTexture);
+
+    gl_FragColor = vec4(sqrt(color), 1.0);
+ }</script>
+
+
+<!!-------- CREATE A PROPERLY DESCRIPTIVE TITLE BELOW -------->
+
+<script id='my_title' type='text/html'>
+ZOO SCAPE
+</script>
+
+
+<!!-------- HERE IS WHERE YOU CAN PROVIDE A LONGER TEXT DESCRIPTION -------->
+
+<script id='my_instructions' type='text/html'><font color=#b0b0b0>
+This is a simple example<br>
+of an inverse kinematic<br>
+arm, and a head rotating<br>
+to look at the wrist.
+</script>
+
+
+<!!-------- YOU PROBABLY DON'T WANT TO CHANGE ANYTHING BELOW FOR NOW -------->
+   
+<script>
+
+// CREATE THE HTML DOCUMENT
+
+let vs = my_vertex_shader.innerHTML,
+    fs = my_fragment_shader.innerHTML;
+    fs = fs.substring(1, fs.length);
+
+document.body.innerHTML = [''
+   ,'<center><font size=6 color=#b0b0b0>' + my_title.innerHTML + '</center>'
+   ,'<TABLE cellspacing=0 cellpadding=0><TR>'
+   ,'<td width=50></td><td><font color=red size=5><div id=errorMessage>&nbsp;</div></font></td>'
+   ,'</TR><TR>'
+   ,'<table cellspacing=10>'
+   ,'<tr>'
+   ,'<td valign=top><font size=2 color=red><div id=errorMarker>&nbsp;</div></font></td>'
+   ,'<td valign=top>'
+   ,'<textArea id=textArea spellcheck=false '
+   ,'style="font:16px courier;outline-width:0;border-style:none;resize:none;overflow:scroll;"'
+   ,'></textArea>'
+   ,'</td><td valign=top>' + document.body.innerHTML + '</td>'
+   ,'<td valign=top><font size=5>' + my_instructions.innerHTML + '</td>'
+   ,'</tr></table>'
+   ,'</TR></TABLE>'
+   ].join('');
+
+// SET UP THE EDITABLE TEXT AREA ON THE LEFT SIDE.
+
+let text = fs.split('\n'), cols = 0;
+for (let i = 0 ; i < text.length ; i++)
+   cols = Math.max(cols, text[i].length);
+
+textArea.rows = text.length;
+textArea.cols = cols;
+textArea.value = fs;
+textArea.style.backgroundColor = '#202020';
+textArea.style.color = 'white';
+
+// REPARSE THE SHADER PROGRAM AFTER EVERY KEYSTROKE.
+
+textArea.onkeyup = function() { canvas1.setShaders(vs, this.value); }
+
+// SET THE CURRENT TIME IN SECONDS BEFORE RENDERING EACH FRAME.
+
+let startTime = Date.now();
+
+
+////////////////// CREATE MESH SHAPES //////////////////
+
+// ADD TWO NEW VALUES TO EACH VERTEX FOR u,v ATTRIBUTE
+
+const VERTEX_SIZE = 8;       // x,y,z, nx,ny,nz, u,v
+
+// CREATE A PARAMETRIC MESH
+
+let createMesh = (nu, nv, uvToShape, info) => {
+   let tmp = [];
+   for (let j = 0 ; j < nv ; j++)
+   for (let i = 0 ; i <= nu ; i++) {
+      tmp = tmp.concat(uvToShape(i/nu,  j   /nv, info));
+      tmp = tmp.concat(uvToShape(i/nu, (j+1)/nv, info));
+   }
+   return new Float32Array(tmp);
+}
+
+
+// GLUE TOGETHER TWO MESHES
+
+let glueTwoMeshes = (a, b) => {
+   let vs = VERTEX_SIZE;
+
+   let c = new Float32Array(a.length + 2 * vs + b.length);
+   let nc = 0;
+
+   let append = (a, i, n) => {
+      for (let j = 0 ; j < n ; j++)
+         c[nc++] = a[i + j];
+   }
+
+   append(a, 0, a.length);
+   append(a, a.length - vs, vs);
+   append(b, 0, vs);
+   append(b, 0, b.length);
+
+   return c;
+}
+
+
+// GLUE TOGETHER AN ARRAY OF MESHES
+
+let glueMeshes = meshes => {
+   let mesh = meshes[0];
+   for (let i = 1 ; i < meshes.length ; i++)
+      mesh = glueTwoMeshes(mesh, meshes[i]);
+   return mesh;
+}
+
+
+// SQUARE MESH
+
+let uvToSquare = (u,v,info) => {
+   let k = 2, z = 0, s = 1;
+
+   if (info) {
+      k = info[0];
+      s = info[1];
+      z = s;
+   }
+
+   let i = (k + 1) % 3;
+   let j = (k + 2) % 3;
+
+   let vertex = [];
+
+   vertex[i] = 2*u-1;
+   vertex[j] = 2*v-1;
+   vertex[k] = z;
+
+   vertex[3 + i] = 0;
+   vertex[3 + j] = 0;
+   vertex[3 + k] = s;
+
+   vertex[6] = u; // ADDED u,v
+   vertex[7] = v;
+
+   return vertex;
+}
+let squareMesh = createMesh(1, 1, uvToSquare);
+
+
+// CUBE MESH: GLUE TOGETHER SIX SQUARE MESHES
+
+let cubeMesh = glueMeshes([
+   createMesh(1,1, uvToSquare, [0,-1]),
+   createMesh(1,1, uvToSquare, [0, 1]),
+   createMesh(1,1, uvToSquare, [1,-1]),
+   createMesh(1,1, uvToSquare, [1, 1]),
+   createMesh(1,1, uvToSquare, [2,-1]),
+   createMesh(1,1, uvToSquare, [2, 1]),
+]);
+
+
+// TUBE MESH
+
+let uvToTube = (u,v) => {
+   let theta = 2 * Math.PI * u;
+   let c = Math.cos(theta);
+   let s = Math.sin(theta);
+   return [ c,s,2*v-1, c,s,0, u,v ]; // ADDED u,v
+}
+let tubeMesh = createMesh(32, 1, uvToTube);
+
+
+// DISK MESH
+
+let uvToDisk = (u,v,info) => {
+   let z = 0, nz = 1;
+
+   if (info) {
+      z = info[0];
+      nz = info[1];
+   }
+
+   let theta = 2 * Math.PI * u;
+   let c = Math.cos(theta);
+   let s = Math.sin(theta);
+   return [ v*c, v*s, z,   0,0,nz,   u,v ]; // ADDED u,v
+}
+let diskMesh = createMesh(32, 1, uvToDisk);
+
+
+// CYLINDER MESH: GLUE TOGETHER A TUBE AND TWO DISKS
+
+let createCylinderMesh = nu => {
+   return glueMeshes([
+      createMesh(nu, 1, uvToDisk, [-1,-1]),
+      createMesh(nu, 1, uvToTube),
+      createMesh(nu, 1, uvToDisk, [1,1])
+   ]);
+}
+let cylinderMesh = createCylinderMesh(18);
+
+
+// SPHERE MESH
+
+let uvToSphere = (u,v) => {
+   let phi = Math.PI * (v - .5);
+   let theta = 2 * Math.PI * u;
+   let x = Math.cos(phi) * Math.cos(theta);
+   let y = Math.cos(phi) * Math.sin(theta);
+   let z = Math.sin(phi);
+   return [ x,y,z,  x,y,z,  u,v ]; // ADDED u,v
+}
+let sphereMesh = createMesh(32, 16, uvToSphere);
+
+
+// LATHE MESH
+
+let epsilon = 0.001;
+
+let uvToLathe = (u,v,info) => {
+   let theta = 2 * Math.PI * u;
+   let z0 = evalCatmullRomSpline(v-epsilon/2, info[0]);
+   let z1 = evalCatmullRomSpline(v+epsilon/2, info[0]);
+   let r0 = evalCatmullRomSpline(v-epsilon/2, info[1]);
+   let r1 = evalCatmullRomSpline(v+epsilon/2, info[1]);
+   let x = r0 * Math.cos(theta);
+   let y = r0 * Math.sin(theta);
+   let N = normalize([x,y,(r0-r1)/(z1-z0)]);
+   return [x,y,z0,  N[0],N[1],N[2],  u,v ]; // ADDED u,v
+}
+
+
+
+////////////////// SUPPORT FOR ANIMATION SEQUENCING.
+
+let defaultTransitionTime = 1;
+let A = [];
+
+/*********** FIRST VERSION
+let addToA = (time, transitionTime) => {
+   A.push({time: time, transitionTime: transitionTime});
+}
+let evalA = (i, t) => {
+   let time = A[i].time;
+   let transitionTime = A[i].transitionTime;
+   if (transitionTime === undefined)
+      transitionTime = defaultTransitionTime;
+   if (t < time) return 0;
+   if (t > time + transitionTime) return 1;
+   return sCurve((t - time) / transitionTime);
+}
+***********/
+
+let addToA = (t0, t1, tt0, tt1) => {
+   if (t1 === undefined)
+      t1 = 10000000;
+   if (tt0 === undefined)
+      tt0 = 1;
+   if (tt1 === undefined)
+      tt1 = tt0;
+
+   A.push({t0 : t0,
+           t1 : t1,
+           tt0: tt0,
+           tt1: tt1
+   });
+
+   return A.length - 1; // RETURN INDEX OF THE NEW SEQUENCE.
+}
+
+let evalA = i => {      // EVALUATE A SEQUENCE AT CURRENT TIME.
+   let t0  = A[i].t0;
+   let t1  = A[i].t1;
+   let tt0 = A[i].tt0;
+   let tt1 = A[i].tt1;
+
+   if (time < t0 || time > t1 + tt1)
+      return 0;
+   if (time > t0 + tt0 && time < t1)
+      return 1;
+   if (time > t0 && time < t0 + tt0)
+      return sCurve((time - t0) / tt0);
+   return 1 - sCurve((time - t1) / tt1);
+}
+
+addToA(0); //begin
+addToA(0, 10000000., 0.3, 10000000.); //hide cage
+addToA(1.0, 100., 5., 10000000.); //intro lion
+//addtoA(2.0, 100., 5., 10000000.); //intro penguin
+
+
+////////////////// RESPOND TO MOUSE EVENTS.
+
+let isDown = false, mouseX = 0, mouseY = 0;
+
+canvas1.onPress = (x, y) => {
+   isDown = true;
+}
+
+canvas1.onDrag = (x, y) => {
+   mouseX = x;
+   mouseY = y;
+}
+
+canvas1.onRelease = (x, y) => {
+   isDown = false;
+}
+
+canvas1.onMove = (x, y) => {
+   mouseX = x;
+   mouseY = y;
+}
+
+
+////////////////// RESPOND TO KEYBOARD EVENTS.
+
+canvas1.onKeyPress = key => {
+   console.log('pressed key', key);
+}
+
+canvas1.onKeyRelease = key => {
+   console.log('released key', key);
+}
+
+
+////////////////// MAIN ANIMATE-FRAME CALLBACK
+
+let time = 0, now = Date.now(), nowX = 0, nowY = 0, varyX = 0, varyZ = 0;
+
+let fl = 3; // FOCAL LENGTH OF CAMERA
+
+let blinkTime = 0, blinkInterval = 1; // STATE DATA TO SUPPORT BLINKING.
+
+
+function animate(gl) {
+
+   //let time = (Date.now() - startTime) / 1000;
+
+
+   // WHENEVER MOUSE IS PRESSED, STOP TIME AND DRAG FIGURE POSITION.
+
+   if (! isDown)
+      time += (Date.now() - now) / 1000;
+   else {
+      varyX += mouseX - nowX;
+      varyZ -= mouseY - nowY;
+   }
+
+   now  = Date.now();
+   nowX = mouseX;
+   nowY = mouseY;
+
+   setUniform('1f', 'uTime', time);
+
+
+   // EACH LIGHT DIRECTION VECTOR MUST BE UNIT LENGTH.
+
+   let L0 = normalize([1,1,1]);
+   let L1 = normalize([-1,-1,-1]);
+
+   setUniform('3fv', 'uLDir', L0.concat(L1));
+
+   setUniform('3fv', 'uLCol', [ .6,.8,1,      .5,.4,.3 ] );
+
+   // USED red,grn,blu SLIDER VALUES TO CONTROL OBJECT COLOR.
+
+   setColor([1,1,1]);
+
+   // ANIMATE RAY TRACED OBJECTS IN THE FRAGMENT SHADER.
+
+   let x = .7 * Math.cos(time);
+   let z = .7 * Math.sin(time);
+   setUniform('4fv', 'uSph', [ 0,0,0,.4,
+                               x,0,z,.2 ] );
+
+
+// ADD PERSPECTIVE TO THE VIEW
+
+//  Perspective matrix to transform ( px, py, pz ):
+//
+//  x        1 0 0 0   px
+//  y  /---  0 1 0 0   py
+//  z  \---  0 0 1 0   pz
+//  w        X Y Z 1   1
+//
+//  Resulting point in space is: ( x/w, y/w, z/w )
+
+   setUniform('Matrix4fv', 'uCamera', false, [
+      1,0,0,0, 0,1,0,0, 0,0,-1,-1/fl, 0,0,0,1
+   ]);
+
+
+
+   // ADJUST RATE OF ANIMATION
+
+   //let T = 1 * time;
+
+    // ROTATE THEPERSON OVER TIME
+
+   //mRotateY(time / 3);
+   ////////////////// DRAW THE SCENE ///////////////////
+  let a1 = evalA(1, time); //hide cage
+  let a2 = evalA(2, time); //introduce lion
+  //let a3 = evalA(3, time); //introduce penguin
+  //let a4 = evalA(4, time);
+  //let a5 = evalA(5, time);
+
+
+   let topCagePos = [0.05,.8,0];
+   let bottomCagePos = [0.05,-.65,0];
+   let hideCage = mix([-9.0,-9.0,-9.0], [0,-2,0], [a1 * (100.00 * time)]);
+   let introLion = mix([0,0,0], [2,0,0], a2);
+   //let introPenguin = mix([-2,0,0], [2,0,0], a3);
+
+   // ANIMATION SEQUENCE: WRIST REACHES FOR MOUSE.
+
+   // let aReach = evalA(reachSequence);
+   
+
+   // CAGE 
+   mSave();
+   mRotateY(.5);
+
+      // TOP OF CAGE
+      mSave();
+         mTranslate(topCagePos);
+         mScale(.6, .05, .6);
+         mRotateY(.4);
+         mTranslate(hideCage);
+         drawMesh(cubeMesh, [.75,.75,.75], 'cage.jpg');
+      mRestore();
+
+      // RODS
+      mSave();
+      //CAGE RIGHT
+         mRotateY(.3);
+         mTranslate(-.5,.078,.6);
+         for (let i = 0 ; i <= 10 ; i ++) {
+            mSave();
+               mTranslate(i * .1,0,.18);
+               mScale(.03,.68,.01);
+               mRotateX(-1.6);
+               //mRotateY(.4);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+            mRestore();
+         }
+
+         //BARS FROM L TO R CAGE LEFT
+         mSave();
+         mRotateY(.3);
+         mTranslate(-.2,.078,.05);
+               mTranslate(.3,-.07,-1.0);
+               mRotateY(2.);
+               mScale(.03,.7,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+        
+       
+         mSave();
+         mRotateY(.3);
+         mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.75);
+               mRotateY(2.);
+               mScale(.03,.66,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.63);
+               mRotateY(2.);
+               mScale(.03,.67,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.51);
+               mRotateY(2.);
+               mScale(.03,.68,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+        
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.4);
+               mRotateY(2.);
+               mScale(.03,.69,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.29);
+               mRotateY(2.);
+               mScale(.03,.7,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.18);
+               mRotateY(2.);
+               mScale(.03,.71,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,-.08);
+               mRotateY(2.);
+               mScale(.03,.72,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+        mSave();
+        mRotateY(.3);
+        mTranslate(-.2,.078,.05);
+               mTranslate(.15,-.07,0.03);
+               mRotateY(2.);
+               mScale(.03,.72,.01);
+               mRotateX(1.6);
+               mTranslate(hideCage);
+               drawMesh(cylinderMesh, [.75,.75,.75], 'cage.jpg');
+        mRestore();
+
+
+      mRestore();
+
+      // BOTTOM OF CAGE
+      mSave();
+
+         mTranslate(bottomCagePos);
+         mScale(.6, .05, .6);
+         mRotateY(.4);
+         mTranslate(hideCage);
+         drawMesh(cubeMesh, [.75,.75,.75], 'cage.jpg');
+
+      mRestore();
+
+   mRestore();
+
+// PERIODICALLY BLINK THE EYES.
+
+      let notBlinking = time - blinkTime > .1;
+      if (time > blinkTime + blinkInterval) {
+         blinkTime = time;
+         blinkInterval = .2 + 1.3 * Math.random();
+      }
+
+
+
+
+
+// LION
+
+let lionHeadPos = [.1,.4,0];
+let tailPos = [.5, -.45, 0.1];
+
+mSave(); 
+
+mTranslate(introLion);
+  mSave();
+
+        // ROTATE THE HEAD TO LOOK IN AIM DIRECTION.
+
+        mTranslate(lionHeadPos);
+        // mRotateY(.3 + .7 * headAim[0]);
+        // mRotateX(.3 - .7 * headAim[1]);
+
+        // DRAW THE HEAD.
+        // NOTE THE THIRD ARGUMENT TO drawMesh().
+        // THAT SPECIFIES THE NAME OF A TEXTURE FILE.
+
+        mScale(.2, .25, .2);
+        //mTranslate(introLion);
+        drawMesh(sphereMesh, [.85,.57,.43]);
+
+
+        // DRAW THE EYEBROWS
+
+        for (let i = -1 ; i <= 1 ; i += 2) {
+           mSave();
+              mTranslate(i * .45,.6,1);
+              mRotateZ(.1);
+              mScale(.25, .025, .1);
+              drawMesh(cubeMesh, [0,0,0]);
+           mRestore();
+        }
+
+        // DRAW THE TWO EYES.
+
+        for (let s = -1 ; s <= 1 ; s += 2) {
+           mSave();
+              mTranslate(s * .45,.3,1);
+              mScale(.3, notBlinking * .2, .3);
+              //mRotateX(.2 * Math.PI);
+              mRotateY(.5 * Math.PI);
+              drawMesh(sphereMesh, [1,1,1], 'eye.jpg');
+           mRestore();
+        }
+
+        // DRAW THE NOSE
+
+        mSave();
+          mTranslate(0,-.3,1);
+          mScale(.25,.025,.1);
+          drawMesh(sphereMesh, [0,0,0]);
+        mRestore();
+
+        // DRAW THE LINE TO THE MOUTH
+
+        mSave();
+           mTranslate(0,-.1,1);
+           mScale(.025,.2,.1);
+           drawMesh(sphereMesh, [0,0,0]);
+        mRestore();
+
+        // DRAW THE MOUTH
+
+        mSave();
+          mTranslate(0,.1,1);
+          mScale(.2,.1,.1);
+          drawMesh(sphereMesh, [0,0,0]);
+        mRestore();
+
+        // DRAW THE MANE
+
+        mSave();
+          mTranslate(0,0,-.5);
+          mScale(1.8, 1.5, 1.);
+          drawMesh(sphereMesh, [1,.3,0], 'lion_mane.jpg');
+        mRestore();
+
+     mRestore();
+
+
+
+     // DRAW BODY
+
+     let lionBodyPos = [.1,-.2,-.1]
+
+     mSave();
+
+     	// DRAW TUMMY
+        mSave();
+     		   mTranslate(lionBodyPos);
+     		   mScale(.23, .4, .2);
+           //mTranslate(introLion);
+      	   drawMesh(sphereMesh, [.85,.57,.43]);
+        mRestore();
+
+        // DRAW BOTTOM LEGS
+        for (let i = -1 ; i <= 1 ; i += 2) {
+           mSave();
+              mTranslate(.1,0,0);
+              mTranslate(i *.1,-.45,0);
+              mRotateY(5.);
+              mRotateX(1.6);
+              mScale(.08, .08, .08);
+              //mTranslate(introLion);
+              drawMesh(cylinderMesh, [.85,.57,.43]);
+           mRestore();
+        }
+
+        // DRAW RIGHT TOES
+        for (let j = 0 ; j < 3 ; j ++ ) {
+           mSave();
+              mTranslate(.13,-.05,0);
+              mTranslate(j *.06,-.45,.2);
+              mScale(.03, .03, .03);
+              //mTranslate(introLion);
+              drawMesh(sphereMesh, [.85,.57,.43]);
+           mRestore();
+        }
+
+        // DRAW LEFT TOES
+        for (let j = 0 ; j < 3 ; j ++ ) {
+           mSave();
+              mTranslate(-.07,-.05,0);
+              mTranslate(j *.06,-.45,.2);
+              mScale(.03, .03, .03);
+              //mTranslate(introLion);
+              drawMesh(sphereMesh, [.85,.57,.43]);
+           mRestore();
+        }
+
+
+      //DRAW OUTER PAWS
+
+         for (let i = -1 ; i <= 1 ; i += 2) {
+              mSave();
+                 mTranslate(.1,.3,0);
+                 mTranslate(i *.18,-.45,0);
+                 mRotateY(5.);
+                 mRotateX(1.6);
+                 mScale(.08, .08, .08);
+                 //mTranslate(introLion);
+                 drawMesh(cylinderMesh, [.85,.57,.43]);
+              mRestore();
+           }
+
+            // DRAW RIGHT TOES
+        for (let j = 0 ; j < 3 ; j ++ ) {
+           mSave();
+              mTranslate(.22,.23,0);
+              mTranslate(j *.06,-.45,.2);
+              mScale(.03, .03, .03);
+              //mTranslate(introLion);
+              drawMesh(sphereMesh, [.85,.57,.43]);
+           mRestore();
+        }
+
+        // DRAW LEFT TOES
+        for (let j = 0 ; j < 3 ; j ++ ) {
+           mSave();
+              mTranslate(-.15,.23,0);
+              mTranslate(j *.06,-.45,.2);
+              mScale(.03, .03, .03);
+              //mTranslate(introLion);
+              drawMesh(sphereMesh, [.85,.57,.43]);
+           mRestore();
+        }
+
+
+        
+        mRestore();
+
+
+     // a == upper arm length, b == lower arm length.
+
+     let a = 0.5, b = 0.4;
+
+
+     let aimTable = [
+        [ [0,-1,0], [1,0,0] ],
+        [ [0, 1,0], [1,0,0] ],
+        [ [-1,0,0], [0,-1,0] ],
+        [ [ 1,0,0], [0,-1,0] ],
+        [ [1,-1,0], [0,0,-1] ],
+        [ [-1,1,0], [0,0,-1] ],
+     ];
+
+     // COMPUTE HINT VECTOR FOR AIMING THE MIDDLE DIRECTION FOR THE TAIL.
+
+     let D = [0,0,0];
+     for (let n = 0 ; n < aimTable.length ; n++) {
+        let d = Math.max(0, dot(aimTable[n][0], tailPos));
+        for (let i = 0 ; i < 3 ; i++)
+           D[i] += d * aimTable[n][1][i];
+     }
+
+     // DO INVERSE KINEMATICS TO COMPUTE TAIL DIRECTION.
+
+      ik(a, b, tailPos, D);
+
+
+     ///////////////// DRAW THE TAIL /////////////////
+
+     //let tailWag = (-.5 + 0.3 * Math.cos(2 * time), 0.3 * Math.sin(2 * time), .2);
+
+
+     // DRAW MIDDLE JOINT.
+
+     mSave();
+        mTranslate(D[0],D[1],D[2]);
+        mScale(.03, .03, .0001);
+        //mTranslate(introLion);
+        drawMesh(sphereMesh, [.85,.57,.43]);
+     mRestore();
+
+
+     // DRAW UPPER TAIL.
+
+     mSave();
+        mAimZ(D);
+        mTranslate(0, 0, a/2);
+        mScale(.05,.05,a/2);
+        //mTranslate(introLion);
+        drawMesh(sphereMesh, [.85,.57,.43]);
+     mRestore();
+
+
+     // DRAW LOWER TAIL.
+
+     mSave();
+        mTranslate(D);
+        mAimZ(subtract(tailPos, D));
+        mTranslate(0, 0, b/2);
+        mScale(.05,.05,b/2);
+        //mTranslate(introLion);
+        drawMesh(sphereMesh, [.85,.57,.43]);
+     mRestore();
+
+
+     // DRAW THE CURSOR (LOCATION OF PUFF).
+
+     mSave();
+        mTranslate(tailPos);
+        mScale(.05, .05, .01);
+        //mTranslate(introLion);
+        drawMesh(cubeMesh, [1.,.3,0.],'lion_mane.jpg');
+     mRestore();
+
+mRestore();
+
+
+
+
+
+
+
+
+/*
+// PENGUIN
+
+let pengHeadPos = [.1,.3,0];
+
+mSave();
+mTranslate(introPenguin);
+   mSave();
+      // ROTATE THE HEAD TO LOOK IN AIM DIRECTION.
+
+      mTranslate(pengHeadPos);
+      // mRotateY(.3 + .7 * headAim[0]);
+      // mRotateX(.3 - .7 * headAim[1]);
+
+      mScale(.15, .15, .15);
+      drawMesh(sphereMesh, [1,1,1]);
+
+      // DRAW THE OUTER HEAD
+      mSave();
+         mTranslate(0,0,-.5);
+         mScale(1.3, 1.3, 1.);
+         drawMesh(sphereMesh, [0,0,0]);
+        mRestore();
+
+
+      // DRAW THE EYEBROWS
+
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(i * .45,.2,1);
+            mRotateZ(.1);
+            mScale(.25, .025, .1);
+            drawMesh(cubeMesh, [0,0,0]);
+         mRestore();
+      }
+
+      // DRAW THE TWO EYES.
+
+      for (let s = -1 ; s <= 1 ; s += 2) {
+         mSave();
+            mTranslate(s * .45,-.1,1);
+            mScale(.3, notBlinking * .2, .3);
+            //mRotateX(.2 * Math.PI);
+            mRotateY(.5 * Math.PI);
+            drawMesh(sphereMesh, [1,1,1],'eye.jpg');
+         mRestore();
+      }
+
+      // DRAW THE BEAK
+
+      mSave();
+        mTranslate(0,-.6,1);
+        mScale(.3,.45,.1);
+         mRotateY(.5 * Math.PI);
+        drawMesh(sphereMesh, [1.,.2,0]);
+      mRestore();
+
+      // DRAW THE NOSE HOLES
+      for (let n = -1 ; n <= 1 ; n += 2) {
+         mSave();
+          mTranslate(n * .1,-.3,1);
+          mScale(.08,.08,.08);
+          drawMesh(sphereMesh, [0,0,0]);
+         mRestore();
+      }
+
+   mRestore();
+
+   // DRAW BODY
+
+   let pengBodyPos = [.1,-.1,-.1]
+
+   mSave();
+
+    // DRAW TUMMY
+         mSave();
+       mTranslate(pengBodyPos);
+       mScale(.25, .4, .2);
+       mRotateY(-1.5);
+          drawMesh(sphereMesh, [1,1,1], 'penguin_skin.png');
+         mRestore();
+
+      // DRAW BOTTOM FEET
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(.1,0,0);
+            mTranslate(i *.1,-.45,0);
+            mRotateY(5.);
+            mRotateX(1.6);
+            mScale(.08, .08, .08);
+            drawMesh(sphereMesh, [1.,.2,0.]);
+         mRestore();
+      }
+
+
+    //DRAW OUTER ARMS
+
+       for (let i = -1 ; i <= 1 ; i += 2) {
+            mSave();
+               mTranslate(.1,.3,0);
+               mTranslate(i *.2,-.45,0);
+              
+               mScale(.08, .2, .09);
+               drawMesh(sphereMesh, [1,1,1],'penguin_skin.png');
+            mRestore();
+         }
+
+    mRestore();
+
+mRestore();
+
+
+
+
+
+
+
+
+
+
+  // ELEPHANT
+
+  let elephantHeadPos = [.1,.5,0];
+
+
+   // ANIMATION SEQUENCE: WRIST REACHES FOR MOUSE.
+
+   // let aReach = evalA(reachSequence);
+    let wristPos = [.5, -.45, 0.1];
+
+
+
+   mSave();
+
+      // ROTATE THE HEAD TO LOOK IN AIM DIRECTION.
+
+      mTranslate(elephantHeadPos);
+      // mRotateY(.3 + .7 * headAim[0]);
+      // mRotateX(.3 - .7 * headAim[1]);
+
+      // DRAW THE HEAD.
+      // NOTE THE THIRD ARGUMENT TO drawMesh().
+      // THAT SPECIFIES THE NAME OF A TEXTURE FILE.
+
+      mScale(.2, .25, .2);
+      drawMesh(sphereMesh, [0.4,0.4,0.4]);
+
+
+      // DRAW THE EYEBROWS
+
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(i * .45,.6,1);
+            mRotateZ(.1);
+            mScale(.25, .025, .1);
+            drawMesh(cubeMesh, [0,0,0]);
+         mRestore();
+      }
+
+      // DRAW THE TWO EYES.
+
+      for (let s = -1 ; s <= 1 ; s += 2) {
+         mSave();
+            mTranslate(s * .45,.3,1);
+            mScale(.3, notBlinking * .2, .3);
+            //mRotateX(.2 * Math.PI);
+            mRotateY(.5 * Math.PI);
+            drawMesh(sphereMesh, [1,1,1], 'eye.jpg');
+         mRestore();
+      }
+
+      // DRAW THE MOUTH
+
+      mSave();
+        mTranslate(0,-.7,1);
+        mScale(.25,.025,.1);
+        drawMesh(sphereMesh, [0,0,0]);
+      mRestore();
+
+      // DRAW THE NOSE
+
+      mSave();
+        mTranslate(0,-.2,1);
+        mScale(.35,.35,.9);
+         mRotateY(.2);
+         mRotateX(.8);
+        drawMesh(cylinderMesh, [0.4,0.4,0.4]);
+      mRestore();
+
+      // DRAW THE MANE
+      for (let i = -1 ; i <= 1 ; i += 2) {
+      mSave();
+        mTranslate(i * 1.5,0,-.5);
+        mScale(1.2, 1.2, 0.2);
+        drawMesh(sphereMesh, [0.25,0.25,0.25], 'lion_mane.jpg');
+      mRestore();
+      }
+   mRestore();
+
+   // DRAW BODY
+
+   let elephantBodyPos = [.1,-.1,-.1]
+
+   mSave();
+
+    // DRAW TUMMY
+         mSave();
+       mTranslate(elephantBodyPos);
+       mScale(.23, .4, .2);
+          drawMesh(sphereMesh, [0.4,0.4,0.4]);
+         mRestore();
+
+      // DRAW BOTTOM LEGS
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(.1,0,0);
+            mTranslate(i *.1,-.45,0);
+            mRotateY(5.);
+            mRotateX(1.6);
+            mScale(.08, .08, .08);
+            drawMesh(cylinderMesh, [0.4,0.4,0.4]);
+         mRestore();
+      }
+
+      // DRAW RIGHT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(.13,-.05,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.03, .03, .03);
+            drawMesh(sphereMesh, [0.1,0.1,0.1]);
+         mRestore();
+      }
+
+      // DRAW LEFT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(-.07,-.05,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.03, .03, .03);
+            drawMesh(sphereMesh, [0.1,0.1,0.1]);
+         mRestore();
+      }
+
+
+    //DRAW OUTER PAWS
+
+       for (let i = -1 ; i <= 1 ; i += 2) {
+            mSave();
+               mTranslate(.1,.3,0);
+               mTranslate(i *.18,-.45,0);
+               mRotateY(5.);
+               mRotateX(1.6);
+               mScale(.08, .08, .08);
+               drawMesh(cylinderMesh, [0.4,0.4,0.4]);
+            mRestore();
+         }
+
+      // DRAW RIGHT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(.22,.23,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.03, .03, .03);
+            drawMesh(sphereMesh, [0.1,0.1,0.1]);
+         mRestore();
+      }
+
+      // DRAW LEFT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(-.15,.23,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.03, .03, .03);
+            drawMesh(sphereMesh, [0.1,0.1,0.1]);
+         mRestore();
+      }
+
+
+      
+      mRestore();
+
+
+   // a == upper arm length, b == lower arm length.
+
+   let aa = 0.5, ba = 0.4;
+
+   // COMPUTE HINT VECTOR FOR AIMING THE MIDDLE DIRECTION FOR THE TAIL.
+
+   let D1 = [0,0,0];
+   for (let n = 0 ; n < aimTable.length ; n++) {
+      let d1 = Math.max(0, dot(aimTable[n][0], wristPos));
+      for (let i = 0 ; i < 3 ; i++)
+         D1[i] += d1 * aimTable[n][1][i];
+   }
+
+   // DO INVERSE KINEMATICS TO COMPUTE TAIL DIRECTION.
+
+    ik(aa, ba, wristPos, D1);
+
+
+   ///////////////// DRAW THE TAIL /////////////////
+
+   //let tailWag = (-.5 + 0.3 * Math.cos(2 * time), 0.3 * Math.sin(2 * time), .2);
+
+   // DRAW START JOINT.
+
+   mSave();
+      mTranslate(.15,.5,0);
+      mScale(.03, .03, .0001);
+      drawMesh(cubeMesh, [0.4,0.4,0.4]);
+   mRestore();
+
+
+   // DRAW MIDDLE JOINT.
+
+   mSave();
+      mTranslate(D1[0],D1[1],D1[2]);
+      mScale(.03, .03, .0001);
+      drawMesh(sphereMesh, [0.4,0.4,0.4]);
+   mRestore();
+
+
+   // DRAW UPPER TAIL.
+
+   mSave();
+      mAimZ(D1);
+      mTranslate(0, 0, aa/2);
+      mScale(.05,.05,aa/2);
+      drawMesh(sphereMesh, [0.4,0.4,0.4]);
+   mRestore();
+
+
+   // DRAW LOWER TAIL.
+
+   mSave();
+      mTranslate(D1);
+      mAimZ(subtract(wristPos, D1));
+      mTranslate(0, 0, ba/2);
+      mScale(.05,.05,ba/2);
+      drawMesh(sphereMesh, [0.4,0.4,0.4]);
+   mRestore();
+
+
+   // DRAW THE CURSOR (LOCATION OF PUFF).
+
+   mSave();
+      mTranslate(wristPos);
+      mScale(.05, .05, .01);
+      drawMesh(cubeMesh, [0.1,0.1,0.1],'lion_mane.jpg');
+   mRestore();
+
+
+
+
+
+
+
+   // MONKEY
+
+    let monkeyHeadPos = [.1,.3,0];
+
+   // ANIMATION SEQUENCE: WRIST REACHES FOR MOUSE.
+
+    let monkTailPos = [.5, -.45, 0.1];
+
+   mSave();
+
+      // ROTATE THE HEAD TO LOOK IN AIM DIRECTION.
+
+      mTranslate(monkeyHeadPos);
+      // mRotateY(.3 + .7 * headAim[0]);
+      // mRotateX(.3 - .7 * headAim[1]);
+
+      // DRAW THE HEAD.
+      // NOTE THE THIRD ARGUMENT TO drawMesh().
+      // THAT SPECIFIES THE NAME OF A TEXTURE FILE.
+
+      mScale(.2, .2, .2);
+      drawMesh(sphereMesh, [.585, .292, 0.2]);
+
+
+      // DRAW THE EYEBROWS
+
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(i * .45,.45,1);
+            mRotateZ(.1);
+            mScale(.25, .025, .1);
+            drawMesh(cubeMesh, [0,0,0]);
+         mRestore();
+      }
+
+      // DRAW THE TWO EYES.
+
+      for (let s = -1 ; s <= 1 ; s += 2) {
+         mSave();
+            mTranslate(s * .45,.1,1);
+            mScale(.3, notBlinking * .2, .3);
+            //mRotateX(.2 * Math.PI);
+            mRotateY(.5 * Math.PI);
+            drawMesh(sphereMesh, [1,1,1], 'eye.jpg');
+         mRestore();
+      }
+
+      // DRAW THE MOUTH
+
+      mSave();
+        mTranslate(0,-.5,1);
+        mScale(.25,.025,.1);
+        drawMesh(sphereMesh, [0,0,0]);
+      mRestore();
+
+      // DRAW THE LINE TO THE MOUTH
+
+      mSave();
+         mTranslate(0,-.3,1);
+         mScale(.025,.2,.1);
+         drawMesh(sphereMesh, [0,0,0]);
+      mRestore();
+
+      // DRAW THE NOSE
+
+      mSave();
+        mTranslate(0,-.2,1);
+        mScale(.2,.1,.1);
+        drawMesh(sphereMesh, [.9,.2,.2]);
+      mRestore();
+
+      // DRAW THE EARS
+      for (let i = -1 ; i <= 1 ; i += 2) {
+      mSave();
+        mTranslate(i * 1.3,.4,-.5);
+        mScale(.45, .4, .4);
+        drawMesh(sphereMesh, [.585, .292, 0.2], 'lion_mane.jpg');
+      mRestore();
+      }  
+
+   mRestore();
+
+   // DRAW BODY
+
+   let monkeyBodyPos = [.1,-.15,-.1]
+
+   mSave();
+
+    // DRAW OUTER TUMMY
+         mSave();
+       mTranslate(monkeyBodyPos);
+       mScale(.25, .3, .2);
+          drawMesh(sphereMesh, [.585, .292, 0.2]);
+         mRestore();
+
+      // DRAW INNER TUMMY
+         mSave();
+          mTranslate(monkeyBodyPos);
+          mScale(.2, .25, .3);
+          drawMesh(sphereMesh, [1., 1., 1.]);
+         mRestore();
+
+      // DRAW BOTTOM LEGS
+      for (let i = -1 ; i <= 1 ; i += 2) {
+         mSave();
+            mTranslate(.1,0,0);
+            mTranslate(i *.1,-.45,0);
+            mRotateY(5.);
+            mRotateX(1.6);
+            mScale(.05, .05, .08);
+            drawMesh(cylinderMesh, [.585, .292, 0.2]);
+         mRestore();
+      }
+
+      // DRAW RIGHT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(.13,-.05,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.025, .025, .025);
+            drawMesh(sphereMesh, [.585, .292, 0.2]);
+         mRestore();
+      }
+
+      // DRAW LEFT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(-.07,-.05,0);
+            mTranslate(j *.06,-.45,.2);
+            mScale(.025, .025, .025);
+            drawMesh(sphereMesh, [.585, .292, 0.2]);
+         mRestore();
+      }
+
+
+    //DRAW OUTER PAWS
+
+       for (let i = -1 ; i <= 1 ; i += 2) {
+            mSave();
+               mTranslate(.1,.3,0);
+               mTranslate(i *.25,-.45,0);
+               mRotateY(5.);
+               mRotateX(1.6);
+               mScale(.05, .05, .08);
+               drawMesh(cylinderMesh, [.585, .292, 0.2]);
+            mRestore();
+         }
+
+          // DRAW RIGHT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(.3,.23,0);
+            mTranslate(j *.04,-.45,.2);
+            mScale(.02, .02, .02);
+            drawMesh(sphereMesh, [.585, .292, 0.2]);
+         mRestore();
+      }
+
+      // DRAW LEFT TOES
+      for (let j = 0 ; j < 3 ; j ++ ) {
+         mSave();
+            mTranslate(-.18,.23,0);
+            mTranslate(j *.04,-.45,.2);
+            mScale(.02, .02, .02);
+            drawMesh(sphereMesh, [.585, .292, 0.2]);
+         mRestore();
+      }
+
+      
+      mRestore();
+
+
+   // a == upper arm length, b == lower arm length.
+
+   let ab = 0.5, bb = 0.4;
+
+   // COMPUTE HINT VECTOR FOR AIMING THE MIDDLE DIRECTION FOR THE TAIL.
+
+   let D2 = [0,0,0];
+   for (let n = 0 ; n < aimTable.length ; n++) {
+      let d2 = Math.max(0, dot(aimTable[n][0], monkTailPos));
+      for (let i = 0 ; i < 3 ; i++)
+         D2[i] += d2 * aimTable[n][1][i];
+   }
+
+   // DO INVERSE KINEMATICS TO COMPUTE TAIL DIRECTION.
+
+    ik(ab, bb, monkTailPos, D2);
+
+
+   ///////////////// DRAW THE TAIL /////////////////
+
+   //let tailWag = (-.5 + 0.3 * Math.cos(2 * time), 0.3 * Math.sin(2 * time), .2);
+
+
+   // DRAW MIDDLE JOINT.
+
+   mSave();
+      mTranslate(D2[0],D2[1],D2[2]);
+      mScale(.03, .03, .0001);
+      drawMesh(sphereMesh, [.585, .292, 0.2]);
+   mRestore();
+
+
+   // DRAW UPPER TAIL.
+
+   mSave();
+      mAimZ(D2);
+      mTranslate(0, 0, ab/2);
+      mScale(.05,.05,ab/2);
+      drawMesh(sphereMesh, [.585, .292, 0.2]);
+   mRestore();
+
+
+   // DRAW LOWER TAIL.
+
+   mSave();
+      mTranslate(D2);
+      mAimZ(subtract(monkTailPos, D2));
+      mTranslate(0, 0, bb/2);
+      mScale(.05,.05,bb/2);
+      drawMesh(sphereMesh, [.585, .292, 0.2]);
+   mRestore();
+
+
+   // DRAW THE CURSOR (LOCATION OF PUFF).
+
+   mSave();
+      mTranslate(monkTailPos);
+      mScale(.05, .05, .01);
+      drawMesh(cubeMesh, [.585, .292, 0.2],'lion_mane.jpg');
+   mRestore();
+   */
+}
+
+function hitTesting() {
+   let ray = {
+      V: [0,0,fl],
+      W: normalize([mouseX, mouseY, -fl])
+   };
+
+   let transformRay = (ray, M) => {
+      return {
+         V:           matrixTransform(M, ray.V.concat([1])).slice(0,3),
+         W: normalize(matrixTransform(M, ray.W.concat([0])).slice(0,3))
+      };
+   }
+
+   // YOU CAN IMPLEMENT DIFFERENT SHAPES HERE
+
+   let rayTraceToUnitSphere = ray => {
+      let B = dot(ray.V, ray.W);
+      let C = dot(ray.V, ray.V) - 1;
+      return B * B > C ? -B - Math.sqrt(B * B - C) : -1;
+   }
+
+/*
+   let rayTraceToUnitCube = ray => {
+      ...
+   }
+
+   let rayTraceToUnitCylinder = ray => {
+      ...
+   }
+*/
+
+   hitIndex = -1;
+   let T = 1000000, t = -1;
+   for (let i = 0 ; i < drawArray.length ; i++) {
+      let mesh   = drawArray[i].mesh,
+          matrix = drawArray[i].matrix,
+          rgb    = drawArray[i].rgb;
+
+      let objectRay = transformRay(ray, matrixInverse(matrix));
+
+      switch (mesh) {
+//    case mesh == cubeMesh: t = rayTraceToUnitCube  (objectRay); break;
+      default              : t = rayTraceToUnitSphere(objectRay); break;
+      }
+
+      if (t >= 0 && t < T) {
+         T = t;
+	 hitIndex = i;
+      }
+   }
+}
+
+let catmullRomMatrix = [ -.5,1,-.5,0, 1.5,-2.5,0,1, -1.5,2,.5,0, .5,-.5,0,0 ];
+
+let evalCatmullRomSpline = (t, K) => {
+   t = Math.max(0, Math.min(t, .9999));
+   let n = K.length - 1;
+   let i = Math.floor(n * t);
+   let f = (n * t) % 1.0;
+
+   let A = K[Math.max(0, i-1)];
+       B = K[i];
+       C = K[i+1];
+       D = K[Math.min(n, i+2)];
+
+   let c = matrixTransform(catmullRomMatrix, [A,B,C,D]);
+
+   return c[0] * f*f*f + c[1] * f*f + c[2] * f + c[3];
+}
+
+let latheMesh = createMesh(32, 32, uvToLathe,
+[
+   [-1,-.7,0,.7,1], // VARY Z AS A FUNCTION OF V
+   [0,.5,.1,.2,0]   // VARY R AS A FUNCTION OF V
+]);
+
+
+/////////////////////////////////////////////////
+//
+// SLIDERS CALLBACK FUNCTIONS
+
+let rotateScene = 0;
+sceneRotateSlider.oninput = function() {
+   rotateScene = this.value / 100;
+}
+
+let yScale = 0;
+yScaleSlider.oninput = function() {
+   yScale = .5 + .5 * this.value / 100;
+}
+
+/////////////////////////////////////////////////
+
+
+// START EVERYTHING.
+
+gl_start(canvas1, vs, fs);
+</script>
+
